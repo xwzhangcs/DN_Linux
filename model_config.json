@@ -1,6 +1,6 @@
 {
 	"model":"../lego_model.pt",
-	"number_paras":5,
+	"number_paras":4,
 	"rangeOfRows":[5,20],
 	"rangeOfCols":[10,20],
 	"rangeOfGrouping":[1,3],

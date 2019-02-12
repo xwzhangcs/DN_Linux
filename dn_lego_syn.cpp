@@ -13,9 +13,6 @@
 #include "rapidjson/filewritestream.h"
 
 int const max_BINARY_value = 255;
-int const height = 224; // DNN image height
-int const width = 224; // DNN image width
-int const num_paras = 4; // number of paras
 
 cv::Mat generateFacadeSynImage(int width, int height, int imageRows, int imageCols, int imageGroups, double imageRelativeWidth, double imageRelativeHeight);
 
@@ -90,15 +87,55 @@ int main(int argc, const char* argv[]) {
 	rapidjson::Document docModel;
 	docModel.ParseStream(isModel);
 	std::cout << "Model JSON File: " << readBuffer << std::endl;
-	// size of chip
-	std::vector<double> facChip_size = read1DArray(doc, "size");
-	// ground
-	bool bground = readBoolValue(doc, "ground", false);
-	// image file
-	std::string img_name = readStringValue(doc, "imagename");
+	// path of DN model
+	std::string model_name = readStringValue(docModel, "model");
+	std::cout << "model_name is " << model_name << std::endl;
+	// number of paras
+	int num_paras = readNumber(docModel, "number_paras", 5);
+	std::cout << "num_paras is " << num_paras << std::endl;
+	// range of Rows
+	std::vector<double> tmp_array = read1DArray(docModel, "rangeOfRows");
+	if (tmp_array.size() != 2){
+		std::cout << "Please check the rangeOfRows member in the JSON file" << std::endl;
+		return 0;
+	}
+	std::pair<int, int> imageRows(tmp_array[0], tmp_array[1]);
+	std::cout << "imageRows is " << imageRows.first << ", " << imageRows.second << std::endl;
+	// range of Cols
+	tmp_array.empty();
+	tmp_array = read1DArray(docModel, "rangeOfCols");
+	if (tmp_array.size() != 2){
+		std::cout << "Please check the rangeOfCols member in the JSON file" << std::endl;
+		return 0;
+	}
+	std::pair<int, int> imageCols(tmp_array[0], tmp_array[1]);
+	std::cout << "imageCols is " << imageCols.first << ", " << imageCols.second << std::endl;
+	// range of Grouping
+	tmp_array.empty();
+	tmp_array = read1DArray(docModel, "rangeOfGrouping");
+	if (tmp_array.size() != 2){
+		std::cout << "Please check the rangeOfGrouping member in the JSON file" << std::endl;
+		return 0;
+	}
+	std::pair<int, int> imageGroups(tmp_array[0], tmp_array[1]);
+	std::cout << "imageGroups is " << imageGroups.first << ", " << imageGroups.second << std::endl;
+	// default size for NN
+	int height = 224; // DNN image height
+	int width = 224; // DNN image width
+	tmp_array.empty();
+	tmp_array = read1DArray(docModel, "defaultSize");
+	if (tmp_array.size() != 2){
+		std::cout << "Please check the defaultSize member in the JSON file" << std::endl;
+		return 0;
+	}
+	width = tmp_array[0];
+	height = tmp_array[1];
+	std::cout << "width is " << width << std::endl;
+	std::cout << "height is " << height << std::endl;
 	fclose(fp);
+
 	// Deserialize the ScriptModule from a file using torch::jit::load().
-	std::shared_ptr<torch::jit::script::Module> module = torch::jit::load(argv[1]);
+	std::shared_ptr<torch::jit::script::Module> module = torch::jit::load(model_name);
 	module->to(at::kCUDA);
 
 	assert(module != nullptr);
@@ -152,8 +189,6 @@ int main(int argc, const char* argv[]) {
 		paras.push_back(out_tensor.slice(1, i, i+1).item<float>());
 	}
 	// predict img by DNN
-	std::pair<int, int> imageRows(5, 20); // configs from synthetic images
-	std::pair<int, int> imageCols(10, 20);
 	int img_rows = round(paras[0] * (imageRows.second - imageRows.first) + imageRows.first);
 	int img_cols = round(paras[1] * (imageCols.second - imageCols.first) + imageCols.first);
 	int img_groups = 1;
@@ -161,7 +196,7 @@ int main(int argc, const char* argv[]) {
 	double relative_height = paras[3];
 
 	// write back to json file
-	fp = fopen(argv[2], "w"); // non-Windows use "w"
+	fp = fopen(argv[1], "w"); // non-Windows use "w"
 	rapidjson::Document::AllocatorType& alloc = doc.GetAllocator();
 	doc.AddMember("valid", true, alloc);
 
