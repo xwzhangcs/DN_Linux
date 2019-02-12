@@ -6,6 +6,12 @@
 #include <iostream>
 #include <memory>
 
+#include "rapidjson/document.h"
+#include "rapidjson/writer.h"
+#include "rapidjson/stringbuffer.h"
+#include "rapidjson/filereadstream.h"
+#include "rapidjson/filewritestream.h"
+
 int const max_BINARY_value = 255;
 int const height = 224; // DNN image height
 int const width = 224; // DNN image width
@@ -13,15 +19,72 @@ int const num_paras = 4; // number of paras
 
 cv::Mat generateFacadeSynImage(int width, int height, int imageRows, int imageCols, int imageGroups, double imageRelativeWidth, double imageRelativeHeight);
 
+double readNumber(const rapidjson::Value& node, const char* key, double default_value) {
+	if (node.HasMember(key) && node[key].IsDouble()) {
+		return node[key].GetDouble();
+	}
+	else if (node.HasMember(key) && node[key].IsInt()) {
+		return node[key].GetInt();
+	}
+	else {
+		return default_value;
+	}
+}
+
+std::vector<double> read1DArray(const rapidjson::Value& node, const char* key) {
+	std::vector<double> array_values;
+	if (node.HasMember(key)) {
+		const rapidjson::Value& data = node[key];
+		array_values.resize(data.Size());
+		for (int i = 0; i < data.Size(); i++)
+			array_values[i] = data[i].GetDouble();
+		return array_values;
+	}
+	else {
+		return array_values;
+	}
+}
+
+bool readBoolValue(const rapidjson::Value& node, const char* key, bool default_value) {
+	if (node.HasMember(key) && node[key].IsBool()) {
+		return node[key].GetBool();
+	}
+	else {
+		return default_value;
+	}
+}
+
+std::string readStringValue(const rapidjson::Value& node, const char* key) {
+	if (node.HasMember(key) && node[key].IsString()) {
+		return node[key].GetString();
+	}
+	else {
+		throw "Could not read string from node";
+	}
+}
+
 int main(int argc, const char* argv[]) {
-	if (argc != 4) {
+	if (argc != 3) {
 	std::cerr << "usage: example-app <path-to-exported-script-module>\n";
 	return -1;
 	}
-
+	// read json file
+	FILE* fp = fopen(argv[2], "r"); // non-Windows use "r"
+	char readBuffer[10240];
+	rapidjson::FileReadStream is(fp, readBuffer, sizeof(readBuffer));
+	rapidjson::Document doc;
+	doc.ParseStream(is);
+	std::cout << "content of json: " << readBuffer << std::endl;
+	// size of chip
+	std::vector<double> facChip_size = read1DArray(doc, "size");
+	// ground
+	bool bground = readBoolValue(doc, "ground", false);
+	fclose(fp);
+	// image file
+	std::string img_name = readStringValue(doc, "imagename");
+	std::cout << "img_name is " << img_name << std::endl;
 	// Deserialize the ScriptModule from a file using torch::jit::load().
 	std::shared_ptr<torch::jit::script::Module> module = torch::jit::load(argv[1]);
-
 	module->to(at::kCUDA);
 
 	assert(module != nullptr);
@@ -29,7 +92,7 @@ int main(int argc, const char* argv[]) {
 
 	// load image
 	cv::Mat src, dst_ehist, dst_classify;
-	src = cv::imread(argv[2], 1);
+	src = cv::imread(img_name, 1);
 	// Convert to grayscale
 	cvtColor(src, src, CV_BGR2GRAY);
 	// Apply Histogram Equalization
@@ -74,22 +137,35 @@ int main(int argc, const char* argv[]) {
 	for (int i = 0; i < num_paras; i++) {
 		paras.push_back(out_tensor.slice(1, i, i+1).item<float>());
 	}
-	
 	// predict img by DNN
 	std::pair<int, int> imageRows(5, 20); // configs from synthetic images
 	std::pair<int, int> imageCols(10, 20);
 	int img_rows = round(paras[0] * (imageRows.second - imageRows.first) + imageRows.first);
 	int img_cols = round(paras[1] * (imageCols.second - imageCols.first) + imageCols.first);
 	int img_groups = 1;
-	double relative_widht = paras[2];
+	double relative_width = paras[2];
 	double relative_height = paras[3];
 
-	cv::Mat syn_img = generateFacadeSynImage(width, height, img_rows, img_cols, img_groups, relative_widht, relative_height);
+	// write back to json file
+	fp = fopen(argv[2], "w"); // non-Windows use "w"
+	rapidjson::Document::AllocatorType& alloc = doc.GetAllocator();
+	doc.AddMember("valid", true, alloc);
 
-	// recover to the original image
-	cv::resize(syn_img, syn_img, src.size());
-	cv::imwrite(argv[3], syn_img);
+	rapidjson::Value paras_json(rapidjson::kObjectType);
+	paras_json.AddMember("rows", img_rows, alloc);
+	paras_json.AddMember("cols", img_cols, alloc);
+	paras_json.AddMember("grouping", img_groups, alloc);
+	paras_json.AddMember("relativeWidth", relative_width, alloc);
+	paras_json.AddMember("relativeHeight", relative_height, alloc);
+	doc.AddMember("paras", paras_json, alloc);
 
+	char writeBuffer[10240];
+	rapidjson::FileWriteStream os(fp, writeBuffer, sizeof(writeBuffer));
+	rapidjson::Writer<rapidjson::FileWriteStream> writer(os);
+	doc.Accept(writer);
+	fclose(fp);
+
+	return 0;
 }
 
 cv::Mat generateFacadeSynImage(int width, int height, int imageRows, int imageCols, int imageGroups, double imageRelativeWidth, double imageRelativeHeight) {
