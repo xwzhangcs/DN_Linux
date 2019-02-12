@@ -8,4 +8,4 @@ cmake -DCMAKE_PREFIX_PATH=/home/zhan2597/libtorch -DCUDA_HOST_COMPILER=/usr/bin/
 # build our application
 make
 # once the build is complete, it will generate exe file in build\Release directory
-./dn_lego_syn ../lego_model.pt ../data/1.png ../data/1_output.png
+./dn_lego_syn ../lego_model.pt ../0001_0000.json
