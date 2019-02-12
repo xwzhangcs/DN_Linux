@@ -65,24 +65,38 @@ std::string readStringValue(const rapidjson::Value& node, const char* key) {
 
 int main(int argc, const char* argv[]) {
 	if (argc != 3) {
-	std::cerr << "usage: example-app <path-to-exported-script-module>\n";
+	std::cerr << "usage: app <path-to-image-JSON-file> <path-to-model-config-JSON-file>\n";
 	return -1;
 	}
-	// read json file
-	FILE* fp = fopen(argv[2], "r"); // non-Windows use "r"
+	// read image json file
+	FILE* fp = fopen(argv[1], "r"); // non-Windows use "r"
 	char readBuffer[10240];
 	rapidjson::FileReadStream is(fp, readBuffer, sizeof(readBuffer));
 	rapidjson::Document doc;
 	doc.ParseStream(is);
-	std::cout << "content of json: " << readBuffer << std::endl;
+	std::cout << "JSON File: " << readBuffer << std::endl;
 	// size of chip
 	std::vector<double> facChip_size = read1DArray(doc, "size");
 	// ground
 	bool bground = readBoolValue(doc, "ground", false);
-	fclose(fp);
 	// image file
 	std::string img_name = readStringValue(doc, "imagename");
-	std::cout << "img_name is " << img_name << std::endl;
+	fclose(fp);
+
+	// read model config json file
+	fp = fopen(argv[2], "r"); // non-Windows use "r"
+	memset(readBuffer, 0, sizeof(readBuffer));
+	rapidjson::FileReadStream isModel(fp, readBuffer, sizeof(readBuffer));
+	rapidjson::Document docModel;
+	docModel.ParseStream(isModel);
+	std::cout << "Model JSON File: " << readBuffer << std::endl;
+	// size of chip
+	std::vector<double> facChip_size = read1DArray(doc, "size");
+	// ground
+	bool bground = readBoolValue(doc, "ground", false);
+	// image file
+	std::string img_name = readStringValue(doc, "imagename");
+	fclose(fp);
 	// Deserialize the ScriptModule from a file using torch::jit::load().
 	std::shared_ptr<torch::jit::script::Module> module = torch::jit::load(argv[1]);
 	module->to(at::kCUDA);
