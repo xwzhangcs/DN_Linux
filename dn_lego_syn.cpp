@@ -79,6 +79,8 @@ int main(int argc, const char* argv[]) {
 	// image file
 	std::string img_name = readStringValue(doc, "imagename");
 	fclose(fp);
+	// score
+	double score = readNumber(doc, "score", 0.2);
 
 	// read model config json file
 	fp = fopen(argv[2], "r"); // non-Windows use "r"
@@ -87,14 +89,23 @@ int main(int argc, const char* argv[]) {
 	rapidjson::Document docModel;
 	docModel.ParseStream(isModel);
 	std::cout << "Model JSON File: " << readBuffer << std::endl;
+	std::string model_name;
+	std::string grammar_name;
+	if (bground){ // choose grammar2
+		grammar_name = "grammar2";
+	}
+	else{ // choose grammar1
+		grammar_name = "grammar1";
+	}
+	rapidjson::Value& grammar = docModel[grammar_name.c_str()];
 	// path of DN model
-	std::string model_name = readStringValue(docModel, "model");
+	model_name = readStringValue(grammar, "model");
 	std::cout << "model_name is " << model_name << std::endl;
 	// number of paras
-	int num_paras = readNumber(docModel, "number_paras", 5);
+	int num_paras = readNumber(grammar, "number_paras", 5);
 	std::cout << "num_paras is " << num_paras << std::endl;
 	// range of Rows
-	std::vector<double> tmp_array = read1DArray(docModel, "rangeOfRows");
+	std::vector<double> tmp_array = read1DArray(grammar, "rangeOfRows");
 	if (tmp_array.size() != 2){
 		std::cout << "Please check the rangeOfRows member in the JSON file" << std::endl;
 		return 0;
@@ -103,7 +114,7 @@ int main(int argc, const char* argv[]) {
 	std::cout << "imageRows is " << imageRows.first << ", " << imageRows.second << std::endl;
 	// range of Cols
 	tmp_array.empty();
-	tmp_array = read1DArray(docModel, "rangeOfCols");
+	tmp_array = read1DArray(grammar, "rangeOfCols");
 	if (tmp_array.size() != 2){
 		std::cout << "Please check the rangeOfCols member in the JSON file" << std::endl;
 		return 0;
@@ -112,7 +123,7 @@ int main(int argc, const char* argv[]) {
 	std::cout << "imageCols is " << imageCols.first << ", " << imageCols.second << std::endl;
 	// range of Grouping
 	tmp_array.empty();
-	tmp_array = read1DArray(docModel, "rangeOfGrouping");
+	tmp_array = read1DArray(grammar, "rangeOfGrouping");
 	if (tmp_array.size() != 2){
 		std::cout << "Please check the rangeOfGrouping member in the JSON file" << std::endl;
 		return 0;
@@ -132,6 +143,18 @@ int main(int argc, const char* argv[]) {
 	height = tmp_array[1];
 	std::cout << "width is " << width << std::endl;
 	std::cout << "height is " << height << std::endl;
+	std::pair<int, int> imageDoors(2, 6);
+	if (bground){
+		tmp_array.empty();
+		tmp_array = read1DArray(grammar, "rangeOfDoors");
+		if (tmp_array.size() != 2){
+			std::cout << "Please check the rangeOfDoors member in the JSON file" << std::endl;
+			return 0;
+		}
+		imageDoors.first = tmp_array[0];
+		imageDoors.second = tmp_array[1];
+	}
+
 	fclose(fp);
 
 	// Deserialize the ScriptModule from a file using torch::jit::load().
