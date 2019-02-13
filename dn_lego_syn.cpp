@@ -144,10 +144,13 @@ int main(int argc, const char* argv[]) {
 	// load image
 	cv::Mat src, dst_ehist, dst_classify;
 	src = cv::imread(img_name, 1);
-	// Convert to grayscale
-	cvtColor(src, src, CV_BGR2GRAY);
-	// Apply Histogram Equalization
-	equalizeHist(src, dst_ehist);
+	cv::Mat hsv;
+	cvtColor(src, hsv, cv::COLOR_BGR2HSV);
+	std::vector<cv::Mat> bgr;   //destination array
+	cv::split(hsv, bgr);//split source 
+	for (int i = 0; i < 3; i++)
+		cv::equalizeHist(bgr[i], bgr[i]);
+	dst_ehist = bgr[2];
 	// threshold classification
 	int threshold = 90;
 	cv::threshold(dst_ehist, dst_classify, threshold, max_BINARY_value, cv::THRESH_BINARY);
@@ -195,6 +198,37 @@ int main(int argc, const char* argv[]) {
 	double relative_width = paras[2];
 	double relative_height = paras[3];
 
+
+	// find the average color for window/non-window
+	cv::Scalar bg_avg_color(0, 0, 0);
+	cv::Scalar win_avg_color(0, 0, 0);
+	{
+		int bg_count = 0;
+		int win_count = 0;
+		for (int i = 0; i < dst_classify.size().height; i++){
+			for (int j = 0; j < dst_classify.size().width; j++){
+				if ((int)dst_classify.at<uchar>(i, j) == 0){
+					win_avg_color.val[0] += src.at<cv::Vec3b>(i, j)[0];
+					win_avg_color.val[1] += src.at<cv::Vec3b>(i, j)[1];
+					win_avg_color.val[2] += src.at<cv::Vec3b>(i, j)[2];
+					win_count++;
+				}
+				else{
+					bg_avg_color.val[0] += src.at<cv::Vec3b>(i, j)[0];
+					bg_avg_color.val[1] += src.at<cv::Vec3b>(i, j)[1];
+					bg_avg_color.val[2] += src.at<cv::Vec3b>(i, j)[2];
+					bg_count++;
+				}
+			}
+		}
+		win_avg_color.val[0] = win_avg_color.val[0] / win_count;
+		win_avg_color.val[1] = win_avg_color.val[1] / win_count;
+		win_avg_color.val[2] = win_avg_color.val[2] / win_count;
+
+		bg_avg_color.val[0] = bg_avg_color.val[0] / bg_count;
+		bg_avg_color.val[1] = bg_avg_color.val[1] / bg_count;
+		bg_avg_color.val[2] = bg_avg_color.val[2] / bg_count;
+	}
 	// write back to json file
 	fp = fopen(argv[1], "w"); // non-Windows use "w"
 	rapidjson::Document::AllocatorType& alloc = doc.GetAllocator();
@@ -207,6 +241,18 @@ int main(int argc, const char* argv[]) {
 	paras_json.AddMember("relativeWidth", relative_width, alloc);
 	paras_json.AddMember("relativeHeight", relative_height, alloc);
 	doc.AddMember("paras", paras_json, alloc);
+
+	rapidjson::Value bg_color_json(rapidjson::kArrayType);
+	bg_color_json.PushBack(bg_avg_color.val[0], alloc);
+	bg_color_json.PushBack(bg_avg_color.val[1], alloc);
+	bg_color_json.PushBack(bg_avg_color.val[2], alloc);
+	doc.AddMember("bg_color", bg_color_json, alloc);
+
+	rapidjson::Value win_color_json(rapidjson::kArrayType);
+	win_color_json.PushBack(win_avg_color.val[0], alloc);
+	win_color_json.PushBack(win_avg_color.val[1], alloc);
+	win_color_json.PushBack(win_avg_color.val[2], alloc);
+	doc.AddMember("window_color", win_color_json, alloc);
 
 	char writeBuffer[10240];
 	rapidjson::FileWriteStream os(fp, writeBuffer, sizeof(writeBuffer));
