@@ -16,6 +16,8 @@ int const max_BINARY_value = 255;
 
 cv::Mat generateFacadeSynImage(int width, int height, int imageRows, int imageCols, int imageGroups, double imageRelativeWidth, double imageRelativeHeight);
 
+int find_threshold(cv::Mat src, bool bground);
+
 double readNumber(const rapidjson::Value& node, const char* key, double default_value) {
 	if (node.HasMember(key) && node[key].IsDouble()) {
 		return node[key].GetDouble();
@@ -71,24 +73,68 @@ int main(int argc, const char* argv[]) {
 	rapidjson::FileReadStream is(fp, readBuffer, sizeof(readBuffer));
 	rapidjson::Document doc;
 	doc.ParseStream(is);
-	std::cout << "JSON File: " << readBuffer << std::endl;
 	// size of chip
 	std::vector<double> facChip_size = read1DArray(doc, "size");
 	// ground
 	bool bground = readBoolValue(doc, "ground", false);
 	// image file
 	std::string img_name = readStringValue(doc, "imagename");
-	fclose(fp);
 	// score
 	double score = readNumber(doc, "score", 0.2);
+	fclose(fp);
+	// first decide whether it's a valid chip
+	bool bvalide = true;
+	if (facChip_size[0] < 5.0 && facChip_size[1] < 5.0)
+		bvalide = false;
+	else if (facChip_size[0] < 30.0 && facChip_size[1] < 30.0 && score < 0.8)
+		bvalide = false;
+	else if (facChip_size[0] > 30.0 && facChip_size[1] < 30.0 && score < 0.7)
+		bvalide = false;
+	else if (facChip_size[0] < 30.0 && facChip_size[1] > 30.0 && score < 0.7)
+		bvalide = false;
+	else if (facChip_size[0] > 30.0 && facChip_size[1] > 30.0 && score < 0.3)
+		bvalide = false;
+	else {
+		bvalide = true;
+	}
+	if (!bvalide) {
+		// write back to json file
+		fp = fopen(argv[1], "w"); // non-Windows use "w"
+		rapidjson::Document::AllocatorType& alloc = doc.GetAllocator();
+		doc.AddMember("valid", bvalide, alloc);
+		// compute avg color
+		cv::Scalar avg_color(0, 0, 0);
+		cv::Mat src = cv::imread(img_name, 1);
+		for (int i = 0; i < src.size().height; i++) {
+			for (int j = 0; j < src.size().width; j++) {
+				avg_color.val[0] += src.at<cv::Vec3b>(i, j)[0];
+				avg_color.val[1] += src.at<cv::Vec3b>(i, j)[1];
+				avg_color.val[2] += src.at<cv::Vec3b>(i, j)[2];
+			}
+		}
+		avg_color.val[0] = avg_color.val[0] / (src.size().height * src.size().width);
+		avg_color.val[1] = avg_color.val[1] / (src.size().height * src.size().width);
+		avg_color.val[2] = avg_color.val[2] / (src.size().height * src.size().width);
 
+		rapidjson::Value avg_color_json(rapidjson::kArrayType);
+		avg_color_json.PushBack(avg_color.val[0], alloc);
+		avg_color_json.PushBack(avg_color.val[1], alloc);
+		avg_color_json.PushBack(avg_color.val[2], alloc);
+		doc.AddMember("bg_color", avg_color_json, alloc);
+
+		char writeBuffer[10240];
+		rapidjson::FileWriteStream os(fp, writeBuffer, sizeof(writeBuffer));
+		rapidjson::Writer<rapidjson::FileWriteStream> writer(os);
+		doc.Accept(writer);
+		fclose(fp);
+		return 0;
+	}
 	// read model config json file
 	fp = fopen(argv[2], "r"); // non-Windows use "r"
 	memset(readBuffer, 0, sizeof(readBuffer));
 	rapidjson::FileReadStream isModel(fp, readBuffer, sizeof(readBuffer));
 	rapidjson::Document docModel;
 	docModel.ParseStream(isModel);
-	std::cout << "Model JSON File: " << readBuffer << std::endl;
 	std::string model_name;
 	std::string grammar_name;
 	if (bground){ // choose grammar2
@@ -153,10 +199,10 @@ int main(int argc, const char* argv[]) {
 		}
 		imageDoors.first = tmp_array[0];
 		imageDoors.second = tmp_array[1];
+		std::cout << "imageDoors is " << imageDoors.first << ", " << imageDoors.second << std::endl;
 	}
 
 	fclose(fp);
-
 	// Deserialize the ScriptModule from a file using torch::jit::load().
 	std::shared_ptr<torch::jit::script::Module> module = torch::jit::load(model_name);
 	module->to(at::kCUDA);
@@ -175,8 +221,10 @@ int main(int argc, const char* argv[]) {
 		cv::equalizeHist(bgr[i], bgr[i]);
 	dst_ehist = bgr[2];
 	// threshold classification
-	int threshold = 90;
+	int threshold = find_threshold(src, bground);
+	std::wcout << "threshold is " << threshold << std::endl;
 	cv::threshold(dst_ehist, dst_classify, threshold, max_BINARY_value, cv::THRESH_BINARY);
+	cv::imwrite("../data/1_output.png", dst_classify);
 	// generate input image for DNN
 	cv::Scalar bg_color(255, 255, 255); // white back ground
 	cv::Scalar window_color(0, 0, 0); // black for windows
@@ -255,7 +303,7 @@ int main(int argc, const char* argv[]) {
 	// write back to json file
 	fp = fopen(argv[1], "w"); // non-Windows use "w"
 	rapidjson::Document::AllocatorType& alloc = doc.GetAllocator();
-	doc.AddMember("valid", true, alloc);
+	doc.AddMember("valid", bvalide, alloc);
 
 	rapidjson::Value paras_json(rapidjson::kObjectType);
 	paras_json.AddMember("rows", img_rows, alloc);
@@ -284,6 +332,36 @@ int main(int argc, const char* argv[]) {
 	fclose(fp);
 
 	return 0;
+}
+
+int find_threshold(cv::Mat src, bool bground) {
+	//Convert pixel values to other color spaces.
+	cv::Mat hsv;
+	cvtColor(src, hsv, cv::COLOR_BGR2HSV);
+	std::vector<cv::Mat> bgr;   //destination array
+	cv::split(hsv, bgr);//split source 
+	for (int i = 0; i < 3; i++)
+		cv::equalizeHist(bgr[i], bgr[i]);
+	/// Load an image
+	cv::Mat src_gray = bgr[2];
+	for (int threshold = 40; threshold < 160; threshold += 5) {
+		cv::Mat dst;
+		cv::threshold(src_gray, dst, threshold, max_BINARY_value, cv::THRESH_BINARY);
+		int count = 0;
+		for (int i = 0; i < dst.size().height; i++) {
+			for (int j = 0; j < dst.size().width; j++) {
+				//noise
+				if ((int)dst.at<uchar>(i, j) == 0) {
+					count++;
+				}
+			}
+		}
+		float percentage = count * 1.0 / (dst.size().height * dst.size().width);
+		if (percentage > 0.25 && !bground)
+			return threshold;
+		if (percentage > 0.35 && bground)
+			return threshold;
+	}
 }
 
 cv::Mat generateFacadeSynImage(int width, int height, int imageRows, int imageCols, int imageGroups, double imageRelativeWidth, double imageRelativeHeight) {
