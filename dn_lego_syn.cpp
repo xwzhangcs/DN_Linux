@@ -331,6 +331,25 @@ int main(int argc, const char* argv[]) {
 	doc.Accept(writer);
 	fclose(fp);
 
+	cv::Mat syn_img = generateFacadeSynImage(width, height, img_rows, img_cols, img_groups, relative_width, relative_height);
+	// recover to the original image
+	cv::resize(syn_img, syn_img, src.size());
+	for (int i = 0; i < syn_img.size().height; i++) {
+		for (int j = 0; j < syn_img.size().width; j++) {
+			if (syn_img.at<cv::Vec3b>(i, j)[0] == 0) {
+				syn_img.at<cv::Vec3b>(i, j)[0] = win_avg_color.val[0];
+				syn_img.at<cv::Vec3b>(i, j)[1] = win_avg_color.val[1];
+				syn_img.at<cv::Vec3b>(i, j)[2] = win_avg_color.val[2];
+			}
+			else {
+				syn_img.at<cv::Vec3b>(i, j)[0] = bg_avg_color.val[0];
+				syn_img.at<cv::Vec3b>(i, j)[1] = bg_avg_color.val[1];
+				syn_img.at<cv::Vec3b>(i, j)[2] = bg_avg_color.val[2];
+			}
+		}
+	}
+	cv::imwrite("../data/output.png", syn_img);
+
 	return 0;
 }
 
