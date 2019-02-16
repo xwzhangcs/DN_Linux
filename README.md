@@ -8,4 +8,4 @@ cmake -DCMAKE_PREFIX_PATH=/home/zhan2597/libtorch -DCUDA_HOST_COMPILER=/usr/bin/
 # build our application
 make
 # once the build is complete, run as follows
-./dn_lego_syn ../0001_0000.json ../model_config.json
+./dn_lego_syn ../metadata ../model_config.json

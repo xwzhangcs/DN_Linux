@@ -65,17 +65,22 @@ std::string readStringValue(const rapidjson::Value& node, const char* key) {
 	}
 }
 
+void process_single_chip(std::string metajson, std::string modeljson);
+
 int main(int argc, const char* argv[]) {
 	if (argc != 3) {
 	std::cerr << "usage: app <path-to-image-JSON-file> <path-to-model-config-JSON-file>\n";
 	return -1;
 	}
-	std::string path = "../data";
-	for (const auto & entry : fs::directory_iterator(path))
+	for (const auto & entry : fs::directory_iterator(argv[1])) {
 		std::cout << entry.path() << std::endl;
+	}
 	return 0;
+}
+
+void process_single_chip(std::string metajson, std::string modeljson) {
 	// read image json file
-	FILE* fp = fopen(argv[1], "r"); // non-Windows use "r"
+	FILE* fp = fopen(metajson.c_str(), "r"); // non-Windows use "r"
 	char readBuffer[10240];
 	rapidjson::FileReadStream is(fp, readBuffer, sizeof(readBuffer));
 	rapidjson::Document doc;
@@ -106,7 +111,7 @@ int main(int argc, const char* argv[]) {
 	}
 	if (!bvalide) {
 		// write back to json file
-		fp = fopen(argv[1], "w"); // non-Windows use "w"
+		fp = fopen(metajson.c_str(), "w"); // non-Windows use "w"
 		rapidjson::Document::AllocatorType& alloc = doc.GetAllocator();
 		doc.AddMember("valid", bvalide, alloc);
 		// compute avg color
@@ -134,7 +139,7 @@ int main(int argc, const char* argv[]) {
 		rapidjson::Writer<rapidjson::FileWriteStream> writer(os);
 		doc.Accept(writer);
 		fclose(fp);
-		return 0;
+		return;
 	}
 	int type = 0;
 	if (facChip_size[0] < 30.0 && facChip_size[1] < 30.0 && score > 0.8)
@@ -149,17 +154,17 @@ int main(int argc, const char* argv[]) {
 		// do nothing
 	}
 	// read model config json file
-	fp = fopen(argv[2], "r"); // non-Windows use "r"
+	fp = fopen(modeljson.c_str(), "r"); // non-Windows use "r"
 	memset(readBuffer, 0, sizeof(readBuffer));
 	rapidjson::FileReadStream isModel(fp, readBuffer, sizeof(readBuffer));
 	rapidjson::Document docModel;
 	docModel.ParseStream(isModel);
 	std::string model_name;
 	std::string grammar_name;
-	if (bground){ // choose grammar2
+	if (bground) { // choose grammar2
 		grammar_name = "grammar2";
 	}
-	else{ // choose grammar1
+	else { // choose grammar1
 		grammar_name = "grammar1";
 	}
 	rapidjson::Value& grammar = docModel[grammar_name.c_str()];
@@ -171,27 +176,27 @@ int main(int argc, const char* argv[]) {
 	std::cout << "num_paras is " << num_paras << std::endl;
 	// range of Rows
 	std::vector<double> tmp_array = read1DArray(grammar, "rangeOfRows");
-	if (tmp_array.size() != 2){
+	if (tmp_array.size() != 2) {
 		std::cout << "Please check the rangeOfRows member in the JSON file" << std::endl;
-		return 0;
+		return;
 	}
 	std::pair<int, int> imageRows(tmp_array[0], tmp_array[1]);
 	std::cout << "imageRows is " << imageRows.first << ", " << imageRows.second << std::endl;
 	// range of Cols
 	tmp_array.empty();
 	tmp_array = read1DArray(grammar, "rangeOfCols");
-	if (tmp_array.size() != 2){
+	if (tmp_array.size() != 2) {
 		std::cout << "Please check the rangeOfCols member in the JSON file" << std::endl;
-		return 0;
+		return;
 	}
 	std::pair<int, int> imageCols(tmp_array[0], tmp_array[1]);
 	std::cout << "imageCols is " << imageCols.first << ", " << imageCols.second << std::endl;
 	// range of Grouping
 	tmp_array.empty();
 	tmp_array = read1DArray(grammar, "rangeOfGrouping");
-	if (tmp_array.size() != 2){
+	if (tmp_array.size() != 2) {
 		std::cout << "Please check the rangeOfGrouping member in the JSON file" << std::endl;
-		return 0;
+		return;
 	}
 	std::pair<int, int> imageGroups(tmp_array[0], tmp_array[1]);
 	std::cout << "imageGroups is " << imageGroups.first << ", " << imageGroups.second << std::endl;
@@ -200,21 +205,21 @@ int main(int argc, const char* argv[]) {
 	int width = 224; // DNN image width
 	tmp_array.empty();
 	tmp_array = read1DArray(docModel, "defaultSize");
-	if (tmp_array.size() != 2){
+	if (tmp_array.size() != 2) {
 		std::cout << "Please check the defaultSize member in the JSON file" << std::endl;
-		return 0;
+		return;
 	}
 	width = tmp_array[0];
 	height = tmp_array[1];
 	std::cout << "width is " << width << std::endl;
 	std::cout << "height is " << height << std::endl;
 	std::pair<int, int> imageDoors(2, 6);
-	if (bground){
+	if (bground) {
 		tmp_array.empty();
 		tmp_array = read1DArray(grammar, "rangeOfDoors");
-		if (tmp_array.size() != 2){
+		if (tmp_array.size() != 2) {
 			std::cout << "Please check the rangeOfDoors member in the JSON file" << std::endl;
-			return 0;
+			return;
 		}
 		imageDoors.first = tmp_array[0];
 		imageDoors.second = tmp_array[1];
@@ -224,7 +229,7 @@ int main(int argc, const char* argv[]) {
 	tmp_array = read1DArray(docModel, "targetChipSize");
 	if (tmp_array.size() != 2) {
 		std::cout << "Please check the targetChipSize member in the JSON file" << std::endl;
-		return 0;
+		return;
 	}
 	double target_width = tmp_array[0];
 	double target_height = tmp_array[1];
@@ -241,14 +246,14 @@ int main(int argc, const char* argv[]) {
 
 	assert(module != nullptr);
 	std::cout << "ok\n";
-	
+
 	// reshape the chip and pick the representative one
 	double ratio_width, ratio_height;
 	// image relative name
 	std::size_t found = img_name.find_first_of("image/");
 	if (found < 0) {
 		std::cout << "found failed!!!" << std::endl;
-		return 0;
+		return;
 	}
 	found = found + 6;
 	cv::Mat src_chip, dst_chip, croppedImage;
@@ -376,7 +381,7 @@ int main(int argc, const char* argv[]) {
 	std::cout << out_tensor.slice(1, 0, num_paras) << std::endl;
 	std::vector<double> paras;
 	for (int i = 0; i < num_paras; i++) {
-		paras.push_back(out_tensor.slice(1, i, i+1).item<float>());
+		paras.push_back(out_tensor.slice(1, i, i + 1).item<float>());
 	}
 	// predict img by DNN
 	int img_rows = round(paras[0] * (imageRows.second - imageRows.first) + imageRows.first);
@@ -392,15 +397,15 @@ int main(int argc, const char* argv[]) {
 	{
 		int bg_count = 0;
 		int win_count = 0;
-		for (int i = 0; i < dst_classify.size().height; i++){
-			for (int j = 0; j < dst_classify.size().width; j++){
-				if ((int)dst_classify.at<uchar>(i, j) == 0){
+		for (int i = 0; i < dst_classify.size().height; i++) {
+			for (int j = 0; j < dst_classify.size().width; j++) {
+				if ((int)dst_classify.at<uchar>(i, j) == 0) {
 					win_avg_color.val[0] += src.at<cv::Vec3b>(i, j)[0];
 					win_avg_color.val[1] += src.at<cv::Vec3b>(i, j)[1];
 					win_avg_color.val[2] += src.at<cv::Vec3b>(i, j)[2];
 					win_count++;
 				}
-				else{
+				else {
 					bg_avg_color.val[0] += src.at<cv::Vec3b>(i, j)[0];
 					bg_avg_color.val[1] += src.at<cv::Vec3b>(i, j)[1];
 					bg_avg_color.val[2] += src.at<cv::Vec3b>(i, j)[2];
@@ -417,7 +422,7 @@ int main(int argc, const char* argv[]) {
 		bg_avg_color.val[2] = bg_avg_color.val[2] / bg_count;
 	}
 	// write back to json file
-	fp = fopen(argv[1], "w"); // non-Windows use "w"
+	fp = fopen(metajson.c_str(), "w"); // non-Windows use "w"
 	rapidjson::Document::AllocatorType& alloc = doc.GetAllocator();
 	doc.AddMember("valid", bvalide, alloc);
 
@@ -483,8 +488,6 @@ int main(int argc, const char* argv[]) {
 		}
 	}
 	cv::imwrite(segs_folder + "/" + img_name.substr(found + 1), dnn_img);
-
-	return 0;
 }
 
 int find_threshold(cv::Mat src, bool bground) {
