@@ -1,0 +1,12 @@
+{
+	"region":"D4",
+	"cluster":"0032",
+	"model":"cgv_r",
+	"facade":17,
+	"crop":[0,0,37,40],
+	"size":[11.79375,12.75],
+	"ground":true,
+	"satellite":"15JAN21161308",
+	"score":0.84081017382065226,
+	"imagename":"../image/0032_0.8408_0017_15JAN21161308.png"
+}

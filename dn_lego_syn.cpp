@@ -5,12 +5,15 @@
 
 #include <iostream>
 #include <memory>
+#include <experimental/filesystem>
 
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/filereadstream.h"
 #include "rapidjson/filewritestream.h"
+
+namespace fs = std::experimental::filesystem;
 
 int const max_BINARY_value = 255;
 
@@ -67,6 +70,10 @@ int main(int argc, const char* argv[]) {
 	std::cerr << "usage: app <path-to-image-JSON-file> <path-to-model-config-JSON-file>\n";
 	return -1;
 	}
+	std::string path = "../data";
+	for (const auto & entry : fs::directory_iterator(path))
+		std::cout << entry.path() << std::endl;
+	return 0;
 	// read image json file
 	FILE* fp = fopen(argv[1], "r"); // non-Windows use "r"
 	char readBuffer[10240];
@@ -128,6 +135,18 @@ int main(int argc, const char* argv[]) {
 		doc.Accept(writer);
 		fclose(fp);
 		return 0;
+	}
+	int type = 0;
+	if (facChip_size[0] < 30.0 && facChip_size[1] < 30.0 && score > 0.8)
+		type = 1;
+	else if (facChip_size[0] > 30.0 && facChip_size[1] < 30.0 && score > 0.7)
+		type = 2;
+	else if (facChip_size[0] < 30.0 && facChip_size[1] > 30.0 && score > 0.7)
+		type = 3;
+	else if (facChip_size[0] > 30.0 && facChip_size[1] > 30.0 && score > 0.3)
+		type = 4;
+	else {
+		// do nothing
 	}
 	// read model config json file
 	fp = fopen(argv[2], "r"); // non-Windows use "r"
@@ -201,7 +220,20 @@ int main(int argc, const char* argv[]) {
 		imageDoors.second = tmp_array[1];
 		std::cout << "imageDoors is " << imageDoors.first << ", " << imageDoors.second << std::endl;
 	}
-
+	tmp_array.empty();
+	tmp_array = read1DArray(docModel, "targetChipSize");
+	if (tmp_array.size() != 2) {
+		std::cout << "Please check the targetChipSize member in the JSON file" << std::endl;
+		return 0;
+	}
+	double target_width = tmp_array[0];
+	double target_height = tmp_array[1];
+	// get chips folder path
+	std::string chips_folder = readStringValue(docModel, "chipFolder");
+	// get chips folder path
+	std::string segs_folder = readStringValue(docModel, "segsFolder");
+	// get dnn folder path
+	std::string dnn_folder = readStringValue(docModel, "dnnFolder");
 	fclose(fp);
 	// Deserialize the ScriptModule from a file using torch::jit::load().
 	std::shared_ptr<torch::jit::script::Module> module = torch::jit::load(model_name);
@@ -209,10 +241,95 @@ int main(int argc, const char* argv[]) {
 
 	assert(module != nullptr);
 	std::cout << "ok\n";
-
+	
+	// reshape the chip and pick the representative one
+	double ratio_width, ratio_height;
+	// image relative name
+	std::size_t found = img_name.find_first_of("image/");
+	if (found < 0) {
+		std::cout << "found failed!!!" << std::endl;
+		return 0;
+	}
+	found = found + 6;
+	cv::Mat src_chip, dst_chip, croppedImage;
+	if (type == 1) {
+		src_chip = cv::imread(img_name);
+		ratio_width = target_width / facChip_size[0] - 1;
+		ratio_height = target_height / facChip_size[1] - 1;
+		std::cout << "ratio_width is " << ratio_width << std::endl;
+		std::cout << "ratio_height is " << ratio_height << std::endl;
+		int top = (int)(ratio_height * src_chip.rows);
+		int bottom = 0;
+		int left = 0;
+		int right = (int)(ratio_width * src_chip.cols);
+		int borderType = cv::BORDER_REFLECT_101;
+		cv::Scalar value(0, 0, 0);
+		cv::copyMakeBorder(src_chip, dst_chip, top, bottom, left, right, borderType, value);
+		croppedImage = dst_chip;
+		cv::imwrite(chips_folder + "/" + img_name.substr(found + 1), croppedImage);
+	}
+	else if (type == 2) {
+		src_chip = cv::imread(img_name);
+		int times = ceil(facChip_size[0] / target_width);
+		ratio_width = (times * target_width - facChip_size[0]) / facChip_size[0];
+		ratio_height = target_height / facChip_size[1] - 1;
+		std::cout << "ratio_width is " << ratio_width << std::endl;
+		std::cout << "ratio_height is " << ratio_height << std::endl;
+		int top = (int)(ratio_height * src_chip.rows);
+		int bottom = 0;
+		int left = 0;
+		int right = (int)(ratio_width * src_chip.cols);
+		int borderType = cv::BORDER_REFLECT_101;
+		cv::Scalar value(0, 0, 0);
+		cv::copyMakeBorder(src_chip, dst_chip, top, bottom, left, right, borderType, value);
+		// crop 30 * 30
+		croppedImage = dst_chip(cv::Rect(dst_chip.size().width * 0.1, 0, dst_chip.size().width / times, dst_chip.size().height));
+		cv::imwrite(chips_folder + "/" + img_name.substr(found + 1), croppedImage);
+	}
+	else if (type == 3) {
+		src_chip = cv::imread(img_name);
+		int times = ceil(facChip_size[1] / target_height);
+		ratio_height = (times * target_height - facChip_size[1]) / facChip_size[1];
+		ratio_width = target_width / facChip_size[0] - 1;
+		std::cout << "ratio_width is " << ratio_width << std::endl;
+		std::cout << "ratio_height is " << ratio_height << std::endl;
+		int top = (int)(ratio_height * src_chip.rows);
+		int bottom = 0;
+		int left = 0;
+		int right = (int)(ratio_width * src_chip.cols);
+		int borderType = cv::BORDER_REFLECT_101;
+		cv::Scalar value(0, 0, 0);
+		cv::copyMakeBorder(src_chip, dst_chip, top, bottom, left, right, borderType, value);
+		// crop 30 * 30
+		croppedImage = dst_chip(cv::Rect(0, dst_chip.size().height * (times - 1) / times, dst_chip.size().width, dst_chip.size().height / times));
+		cv::imwrite(chips_folder + "/" + img_name.substr(found + 1), croppedImage);
+	}
+	else if (type == 4) {
+		src_chip = cv::imread(img_name);
+		int times_width = ceil(facChip_size[0] / target_width);
+		int times_height = ceil(facChip_size[1] / target_height);
+		ratio_width = (times_width * target_width - facChip_size[0]) / facChip_size[0];
+		ratio_height = (times_height * target_height - facChip_size[1]) / facChip_size[1];
+		std::cout << "ratio_width is " << ratio_width << std::endl;
+		std::cout << "ratio_height is " << ratio_height << std::endl;
+		int top = (int)(ratio_height * src_chip.rows);
+		int bottom = 0;
+		int left = 0;
+		int right = (int)(ratio_width * src_chip.cols);
+		int borderType = cv::BORDER_REFLECT_101;
+		cv::Scalar value(0, 0, 0);
+		cv::copyMakeBorder(src_chip, dst_chip, top, bottom, left, right, borderType, value);
+		// crop 30 * 30
+		croppedImage = dst_chip(cv::Rect(dst_chip.size().width * 0.1, dst_chip.size().height * (times_height - 1) / times_height, dst_chip.size().width / times_width, dst_chip.size().height / times_height));
+		cv::imwrite(chips_folder + "/" + img_name.substr(found + 1), croppedImage);
+	}
+	else {
+		// do nothing
+	}
 	// load image
 	cv::Mat src, dst_ehist, dst_classify;
-	src = cv::imread(img_name, 1);
+	//src = cv::imread(img_name, 1);
+	src = croppedImage;
 	cv::Mat hsv;
 	cvtColor(src, hsv, cv::COLOR_BGR2HSV);
 	std::vector<cv::Mat> bgr;   //destination array
@@ -224,7 +341,6 @@ int main(int argc, const char* argv[]) {
 	int threshold = find_threshold(src, bground);
 	std::wcout << "threshold is " << threshold << std::endl;
 	cv::threshold(dst_ehist, dst_classify, threshold, max_BINARY_value, cv::THRESH_BINARY);
-	cv::imwrite("../data/1_output.png", dst_classify);
 	// generate input image for DNN
 	cv::Scalar bg_color(255, 255, 255); // white back ground
 	cv::Scalar window_color(0, 0, 0); // black for windows
@@ -331,9 +447,11 @@ int main(int argc, const char* argv[]) {
 	doc.Accept(writer);
 	fclose(fp);
 
+	// for 
 	cv::Mat syn_img = generateFacadeSynImage(width, height, img_rows, img_cols, img_groups, relative_width, relative_height);
 	// recover to the original image
 	cv::resize(syn_img, syn_img, src.size());
+	cv::resize(dnn_img, dnn_img, src.size());
 	for (int i = 0; i < syn_img.size().height; i++) {
 		for (int j = 0; j < syn_img.size().width; j++) {
 			if (syn_img.at<cv::Vec3b>(i, j)[0] == 0) {
@@ -348,7 +466,23 @@ int main(int argc, const char* argv[]) {
 			}
 		}
 	}
-	cv::imwrite("../data/output.png", syn_img);
+	cv::imwrite(dnn_folder + "/" + img_name.substr(found + 1), syn_img);
+
+	for (int i = 0; i < dnn_img.size().height; i++) {
+		for (int j = 0; j < dnn_img.size().width; j++) {
+			if (dnn_img.at<cv::Vec3b>(i, j)[0] == 0) {
+				dnn_img.at<cv::Vec3b>(i, j)[0] = win_avg_color.val[0];
+				dnn_img.at<cv::Vec3b>(i, j)[1] = win_avg_color.val[1];
+				dnn_img.at<cv::Vec3b>(i, j)[2] = win_avg_color.val[2];
+			}
+			else {
+				dnn_img.at<cv::Vec3b>(i, j)[0] = bg_avg_color.val[0];
+				dnn_img.at<cv::Vec3b>(i, j)[1] = bg_avg_color.val[1];
+				dnn_img.at<cv::Vec3b>(i, j)[2] = bg_avg_color.val[2];
+			}
+		}
+	}
+	cv::imwrite(segs_folder + "/" + img_name.substr(found + 1), dnn_img);
 
 	return 0;
 }
