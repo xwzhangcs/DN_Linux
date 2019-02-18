@@ -18,6 +18,7 @@ namespace fs = std::experimental::filesystem;
 int const max_BINARY_value = 255;
 
 cv::Mat generateFacadeSynImage(int width, int height, int imageRows, int imageCols, int imageGroups, double imageRelativeWidth, double imageRelativeHeight);
+cv::Mat generateFacadeSynImage(int width, int height, int imageRows, int imageCols, int imageGroups, int imageDoors, double imageRelativeWidth, double imageRelativeHeight, double imageRelativeDWidth, double imageRelativeDHeight);
 
 int find_threshold(cv::Mat src, bool bground);
 
@@ -95,25 +96,33 @@ void process_single_chip(std::string metajson, std::string modeljson) {
 	double score = readNumber(doc, "score", 0.2);
 	fclose(fp);
 	// first decide whether it's a valid chip
-	bool bvalide = true;
-	if (facChip_size[0] < 5.0 && facChip_size[1] < 5.0)
-		bvalide = false;
-	else if (facChip_size[0] < 30.0 && facChip_size[1] < 30.0 && score < 0.8)
-		bvalide = false;
-	else if (facChip_size[0] > 30.0 && facChip_size[1] < 30.0 && score < 0.7)
-		bvalide = false;
-	else if (facChip_size[0] < 30.0 && facChip_size[1] > 30.0 && score < 0.7)
-		bvalide = false;
-	else if (facChip_size[0] > 30.0 && facChip_size[1] > 30.0 && score < 0.3)
-		bvalide = false;
-	else {
-		bvalide = true;
+	bool bvalid = false;
+	int type = 0;
+	if (facChip_size[0] < 30.0 && facChip_size[1] < 30.0 && score > 0.95) {
+		type = 1;
+		bvalid = true;
 	}
-	if (!bvalide) {
+	else if (facChip_size[0] > 30.0 && facChip_size[1] < 30.0 && score > 0.9) {
+		type = 2;
+		bvalid = true;
+	}
+	else if (facChip_size[0] < 30.0 && facChip_size[1] > 30.0 && score > 0.9) {
+		type = 3;
+		bvalid = true;
+	}
+	else if (facChip_size[0] > 30.0 && facChip_size[1] > 30.0 && score > 0.7) {
+		type = 4;
+		bvalid = true;
+	}
+	else {
+		// do nothing
+	}
+
+	if (!bvalid) {
 		// write back to json file
 		fp = fopen(metajson.c_str(), "wb"); // non-Windows use "w"
 		rapidjson::Document::AllocatorType& alloc = doc.GetAllocator();
-		doc.AddMember("valid", bvalide, alloc);
+		doc.AddMember("valid", bvalid, alloc);
 		// compute avg color
 		cv::Scalar avg_color(0, 0, 0);
 		cv::Mat src = cv::imread(img_name, 1);
@@ -140,18 +149,6 @@ void process_single_chip(std::string metajson, std::string modeljson) {
 		doc.Accept(writer);
 		fclose(fp);
 		return;
-	}
-	int type = 0;
-	if (facChip_size[0] < 30.0 && facChip_size[1] < 30.0 && score > 0.8)
-		type = 1;
-	else if (facChip_size[0] > 30.0 && facChip_size[1] < 30.0 && score > 0.7)
-		type = 2;
-	else if (facChip_size[0] < 30.0 && facChip_size[1] > 30.0 && score > 0.7)
-		type = 3;
-	else if (facChip_size[0] > 30.0 && facChip_size[1] > 30.0 && score > 0.3)
-		type = 4;
-	else {
-		// do nothing
 	}
 	// read model config json file
 	fp = fopen(modeljson.c_str(), "rb"); // non-Windows use "r"
@@ -251,6 +248,8 @@ void process_single_chip(std::string metajson, std::string modeljson) {
 	std::string dnns_folder = readStringValue(docModel, "dnnsFolder");
 	// get threshold path
 	std::string thresholds_file = readStringValue(docModel, "thresholds");
+	// get ground info
+	std::string grounds_file = readStringValue(docModel, "grounds");
 	fclose(fp);
 	// Deserialize the ScriptModule from a file using torch::jit::load().
 	std::shared_ptr<torch::jit::script::Module> module = torch::jit::load(model_name);
@@ -267,6 +266,8 @@ void process_single_chip(std::string metajson, std::string modeljson) {
 	}
 	found = found + 6;
 	cv::Mat src_chip, dst_chip, croppedImage;
+	if (bDebug)
+		std::cout << "type is " << type << std::endl;
 	if (type == 1) {
 		src_chip = cv::imread(img_name);
 		ratio_width = target_width / facChip_size[0] - 1;
@@ -371,6 +372,12 @@ void process_single_chip(std::string metajson, std::string modeljson) {
 		out_param << ",";
 		out_param << threshold;
 		out_param << "\n";
+
+		std::ofstream out_param_ground(grounds_file, std::ios::app);
+		out_param_ground << img_name.substr(found + 1);
+		out_param_ground << ",";
+		out_param_ground << bground;
+		out_param_ground << "\n";
 	}
 
 	cv::threshold(dst_ehist, dst_classify, threshold, max_BINARY_value, cv::THRESH_BINARY);
@@ -411,14 +418,13 @@ void process_single_chip(std::string metajson, std::string modeljson) {
 	for (int i = 0; i < num_paras; i++) {
 		paras.push_back(out_tensor.slice(1, i, i + 1).item<float>());
 	}
-	// predict img by DNN
-	int img_rows = round(paras[0] * (imageRows.second - imageRows.first) + imageRows.first);
-	int img_cols = round(paras[1] * (imageCols.second - imageCols.first) + imageCols.first);
-	int img_groups = 1;
-	double relative_width = paras[2];
-	double relative_height = paras[3];
-
-
+	// adjust paras
+	for (int i = 0; i < num_paras; i++) {
+		if (paras[i] > 1.0)
+			paras[i] = 1.0;
+		if (paras[i] < 0.0)
+			paras[i] = 0.0;
+	}
 	// find the average color for window/non-window
 	cv::Scalar bg_avg_color(0, 0, 0);
 	cv::Scalar win_avg_color(0, 0, 0);
@@ -452,15 +458,7 @@ void process_single_chip(std::string metajson, std::string modeljson) {
 	// write back to json file
 	fp = fopen(metajson.c_str(), "w"); // non-Windows use "w"
 	rapidjson::Document::AllocatorType& alloc = doc.GetAllocator();
-	doc.AddMember("valid", bvalide, alloc);
-
-	rapidjson::Value paras_json(rapidjson::kObjectType);
-	paras_json.AddMember("rows", img_rows, alloc);
-	paras_json.AddMember("cols", img_cols, alloc);
-	paras_json.AddMember("grouping", img_groups, alloc);
-	paras_json.AddMember("relativeWidth", relative_width, alloc);
-	paras_json.AddMember("relativeHeight", relative_height, alloc);
-	doc.AddMember("paras", paras_json, alloc);
+	doc.AddMember("valid", bvalid, alloc);
 
 	rapidjson::Value bg_color_json(rapidjson::kArrayType);
 	bg_color_json.PushBack(bg_avg_color.val[0], alloc);
@@ -474,14 +472,54 @@ void process_single_chip(std::string metajson, std::string modeljson) {
 	win_color_json.PushBack(win_avg_color.val[2], alloc);
 	doc.AddMember("window_color", win_color_json, alloc);
 
+	// predict img by DNN
+	cv::Mat syn_img;
+	if (!bground) {
+		int img_rows = round(paras[0] * (imageRows.second - imageRows.first) + imageRows.first);
+		int img_cols = round(paras[1] * (imageCols.second - imageCols.first) + imageCols.first);
+		int img_groups = round(paras[2] * (imageGroups.second - imageGroups.first) + imageGroups.first);
+		double relative_width = paras[3];
+		double relative_height = paras[4];
+
+		rapidjson::Value paras_json(rapidjson::kObjectType);
+		paras_json.AddMember("rows", img_rows, alloc);
+		paras_json.AddMember("cols", img_cols, alloc);
+		paras_json.AddMember("grouping", img_groups, alloc);
+		paras_json.AddMember("relativeWidth", relative_width, alloc);
+		paras_json.AddMember("relativeHeight", relative_height, alloc);
+		doc.AddMember("paras", paras_json, alloc);
+
+		syn_img = generateFacadeSynImage(width, height, img_rows, img_cols, img_groups, relative_width, relative_height);
+	}
+	else {
+		int img_rows = round(paras[0] * (imageRows.second - imageRows.first) + imageRows.first);
+		int img_cols = round(paras[1] * (imageCols.second - imageCols.first) + imageCols.first);
+		int img_groups = round(paras[2] * (imageGroups.second - imageGroups.first) + imageGroups.first);
+		int img_doors = round(paras[3] * (imageDoors.second - imageDoors.first) + imageDoors.first);
+		double relative_width = paras[4];
+		double relative_height = paras[5];
+		double relative_door_width = paras[6];
+		double relative_door_height = paras[7];
+
+		rapidjson::Value paras_json(rapidjson::kObjectType);
+		paras_json.AddMember("rows", img_rows, alloc);
+		paras_json.AddMember("cols", img_cols, alloc);
+		paras_json.AddMember("grouping", img_groups, alloc);
+		paras_json.AddMember("doors", img_doors, alloc);
+		paras_json.AddMember("relativeWidth", relative_width, alloc);
+		paras_json.AddMember("relativeHeight", relative_height, alloc);
+		paras_json.AddMember("relativeDWidth", relative_door_width, alloc);
+		paras_json.AddMember("relativeDHeight", relative_door_height, alloc);
+		doc.AddMember("paras", paras_json, alloc);
+
+		syn_img = generateFacadeSynImage(width, height, img_rows, img_cols, img_groups, img_doors, relative_width, relative_height, relative_door_width, relative_door_height);
+	}
 	char writeBuffer[10240];
 	rapidjson::FileWriteStream os(fp, writeBuffer, sizeof(writeBuffer));
 	rapidjson::Writer<rapidjson::FileWriteStream> writer(os);
 	doc.Accept(writer);
 	fclose(fp);
 
-	// for 
-	cv::Mat syn_img = generateFacadeSynImage(width, height, img_rows, img_cols, img_groups, relative_width, relative_height);
 	// recover to the original image
 	cv::resize(syn_img, syn_img, src.size());
 	cv::resize(dnn_img, dnn_img, src.size());
@@ -587,8 +625,9 @@ cv::Mat generateFacadeSynImage(int width, int height, int imageRows, int imageCo
 		}
 	}
 	else {
-		double GFW = WW / NG;
-		double GWW = WW / NG - 2;
+		double gap = 0.05 * WW; // Assume not too many windows in one group
+		double GWW = (WW - gap * (NG - 1)) / NG;
+		double GFW = GWW + gap;
 		for (int i = 0; i < NR; ++i) {
 			for (int j = 0; j < NC; ++j) {
 				float x1 = (FW - WW) * 0.5 + FW * j;
@@ -602,6 +641,92 @@ cv::Mat generateFacadeSynImage(int width, int height, int imageRows, int imageCo
 					cv::rectangle(result, cv::Point(std::round(g_x1), std::round(g_y1)), cv::Point(std::round(g_x2), std::round(g_y2)), window_color, thickness);
 				}
 			}
+		}
+	}
+	return result;
+}
+
+cv::Mat generateFacadeSynImage(int width, int height, int imageRows, int imageCols, int imageGroups, int imageDoors, double imageRelativeWidth, double imageRelativeHeight, double imageRelativeDWidth, double imageRelativeDHeight) {
+	cv::Scalar bg_color(255, 255, 255); // white back ground
+	cv::Scalar window_color(0, 0, 0); // black for windows
+	int NR = imageRows;
+	int NG = imageGroups;
+	int NC = imageCols;
+	int ND = imageDoors;
+	double ratioWidth = imageRelativeWidth;
+	double ratioHeight = imageRelativeHeight;
+	double ratioDWidth = imageRelativeDWidth;
+	double ratioDHeight = imageRelativeDHeight;
+	int thickness = -1;
+	cv::Mat result(height, width, CV_8UC3, bg_color);
+	double DFW = width * 1.0 / ND;
+	double DFH = height * ratioDHeight;
+	double DW = DFW * ratioDWidth;
+	double DH = DFH * 0.9;
+	double FH = (height - DFH) * 1.0 / NR;
+	double FW = width * 1.0 / NC;
+	double WH = FH * ratioHeight;
+	double WW = FW * ratioWidth;
+	std::cout << "NR is " << NR << std::endl;
+	std::cout << "NC is " << NC << std::endl;
+	std::cout << "FH is " << FH << std::endl;
+	std::cout << "FW is " << FW << std::endl;
+	std::cout << "NG is " << NG << std::endl;
+	std::cout << "ND is " << ND << std::endl;
+	std::cout << "ratioWidth is " << ratioWidth << std::endl;
+	std::cout << "ratioHeight is " << ratioHeight << std::endl;
+	std::cout << "WH is " << WH << std::endl;
+	std::cout << "WW is " << WW << std::endl;
+	std::cout << "ratioDWidth is " << ratioDWidth << std::endl;
+	std::cout << "ratioDHeight is " << ratioDHeight << std::endl;
+	std::cout << "DH is " << DH << std::endl;
+	std::cout << "DW is " << DW << std::endl;
+
+	if (NG == 1) {
+		// windows
+		for (int i = 0; i < NR; ++i) {
+			for (int j = 0; j < NC; ++j) {
+				float x1 = (FW - WW) * 0.5 + FW * j;
+				float y1 = (FH - WH) * 0.5 + FH * i;
+				float x2 = x1 + WW;
+				float y2 = y1 + WH;
+				cv::rectangle(result, cv::Point(std::round(x1), std::round(y1)), cv::Point(std::round(x2), std::round(y2)), window_color, thickness);
+			}
+		}
+		// doors
+		for (int i = 0; i < ND; i++) {
+			float x1 = (DFW - DW) * 0.5 + DFW * i;
+			float y1 = height - DH;
+			float x2 = x1 + DW;
+			float y2 = y1 + DH;
+			cv::rectangle(result, cv::Point(std::round(x1), std::round(y1)), cv::Point(std::round(x2), std::round(y2)), window_color, thickness);
+		}
+	}
+	else {
+		// windows
+		double gap = 0.05 * WW; // Assume not too many windows in one group
+		double GWW = (WW - gap * (NG - 1)) / NG;
+		double GFW = GWW + gap;
+		for (int i = 0; i < NR; ++i) {
+			for (int j = 0; j < NC; ++j) {
+				float x1 = (FW - WW) * 0.5 + FW * j;
+				float y1 = (FH - WH) * 0.5 + FH * i;
+				for (int k = 0; k < NG; k++) {
+					float g_x1 = x1 + GFW * k;
+					float g_y1 = y1;
+					float g_x2 = g_x1 + GWW;
+					float g_y2 = g_y1 + WH;
+					cv::rectangle(result, cv::Point(std::round(g_x1), std::round(g_y1)), cv::Point(std::round(g_x2), std::round(g_y2)), window_color, thickness);
+				}
+			}
+		}
+		// doors
+		for (int i = 0; i < ND; i++) {
+			float x1 = (DFW - DW) * 0.5 + DFW * i;
+			float y1 = height - DH;
+			float x2 = x1 + DW;
+			float y2 = y1 + DH;
+			cv::rectangle(result, cv::Point(std::round(x1), std::round(y1)), cv::Point(std::round(x2), std::round(y2)), window_color, thickness);
 		}
 	}
 	return result;
